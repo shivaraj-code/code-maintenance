@@ -1,0 +1,48 @@
+spring:
+  application:
+    name: maintenance-service
+  jpa:
+    hibernate:
+      ddl-auto: none
+  main:
+    allow-bean-definition-overriding: true
+
+  servlet:
+    multipart:
+      max-file-size: 100MB
+      max-request-size: 100MB  
+server:
+  port: 9192
+openapi:
+  server:
+    url: ${holter.apigateway.url}/search
+---
+spring:
+  profiles: dev
+  cloud:
+    config:
+      uri: http://10.0.0.104:8888
+      label: dev
+  
+---
+spring:
+  profiles: local,default
+  cloud:
+    config:
+      uri: http://localhost:8888
+      label: localsiva
+      
+  servlet:
+    multipart:
+      max-file-size: 100MB
+      max-request-size: 100MB    
+aws:
+  s3:
+    bucket-name: dev-cs-media-bk
+    root-folder: code-maintenance-source-files
+    upload-folder: upload
+    inprocess-folder: inprocess
+    processed-folder: processed
+    icd-folder: icd10
+    snomed-folder: snomed
+    medicine-folder: medicine
