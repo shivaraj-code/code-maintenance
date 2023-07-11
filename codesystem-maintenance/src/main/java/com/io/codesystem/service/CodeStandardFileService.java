@@ -24,7 +24,7 @@ public class CodeStandardFileService {
 
 	@Autowired
 	private S3Utility s3Utility;
-	
+
 	@Value("${aws.s3.bucket-name}")
 	private String bucketName;
 
@@ -45,16 +45,16 @@ public class CodeStandardFileService {
 
 	@Value("${aws.s3.snomed-folder}")
 	private String snomedFolderName;
-	
+
 	@Value("${aws.s3.medicine-folder}")
 	private String medicineFolderName;
-	
+
 	@Autowired
 	CodeStandardFileRepository codeStandardFileRepository;
-	
+
 	@Autowired
 	IcdCodeStandardService icdCodeStandardService;
-	
+
 	@Autowired
 	MedicineStandardService medicineStandardService;
 
@@ -64,41 +64,41 @@ public class CodeStandardFileService {
 		String targetCodeStandardFolder = getCodeStandardTargetFolderName(standard);
 		String targetFolderPath = rootFolderName + "/" + uploadFolderName + "/" + targetCodeStandardFolder + "/";
 		String targetFileName = fileName;
-        String fileExistigStatus=checkFileAlreadyExistsInAnyTargetCodeFolders(targetFileName, targetCodeStandardFolder);
-		String fileUploadStatus="";
+		String fileExistigStatus = checkFileAlreadyExistsInAnyTargetCodeFolders(targetFileName,
+				targetCodeStandardFolder);
+		String fileUploadStatus = "";
 		try {
-			
-	if(fileExistigStatus.equalsIgnoreCase("Success"))
-	{
-			s3Utility.saveFile(bucketName, targetFolderPath + targetFileName, file.getInputStream());
-			CodeStandardFile codeStandardFile = new CodeStandardFile();
-			
-			codeStandardFile.setCodeStandard(standard);
-			codeStandardFile.setFileName(targetFileName);
-			codeStandardFile.setFilePath(targetFolderPath+targetFileName);
-			codeStandardFile.setReleaseVersion(releaseVersion);
-			codeStandardFile.setReleaseDate(releaseDate);
-			codeStandardFile.setProcessedStatus("Uploaded");
-			codeStandardFile.setTempStatus("File Uploaded Successfully");
-			codeStandardFile.setActive(1);
-            codeStandardFile.setUserId(2);
-            codeStandardFile.setComments("file Uploaded");
-            codeStandardFile.setModifiedUserId(2);
-            codeStandardFile.setStatus("Success");
-            codeStandardFile.setSource("AMA");
-            codeStandardFile.setModifiedDate(Timestamp.valueOf(LocalDateTime.now()));
-            codeStandardFile.setInsertedDate(Timestamp.valueOf(LocalDateTime.now()));	
-			saveUploadedFileDetails(codeStandardFile);
-			
-			fileUploadStatus="Success";
-	}else {
-		return fileExistigStatus;
-	}
+
+			if (fileExistigStatus.equalsIgnoreCase("Success")) {
+				s3Utility.saveFile(bucketName, targetFolderPath + targetFileName, file.getInputStream());
+				CodeStandardFile codeStandardFile = new CodeStandardFile();
+
+				codeStandardFile.setCodeStandard(standard);
+				codeStandardFile.setFileName(targetFileName);
+				codeStandardFile.setFilePath(targetFolderPath + targetFileName);
+				codeStandardFile.setReleaseVersion(releaseVersion);
+				codeStandardFile.setReleaseDate(releaseDate);
+				codeStandardFile.setProcessedStatus("Uploaded");
+				codeStandardFile.setTempStatus("File Uploaded Successfully");
+				codeStandardFile.setActive(1);
+				codeStandardFile.setUserId(2);
+				codeStandardFile.setComments("file Uploaded");
+				codeStandardFile.setModifiedUserId(2);
+				codeStandardFile.setStatus("Success");
+				codeStandardFile.setSource("AMA");
+				codeStandardFile.setModifiedDate(Timestamp.valueOf(LocalDateTime.now()));
+				codeStandardFile.setInsertedDate(Timestamp.valueOf(LocalDateTime.now()));
+				saveUploadedFileDetails(codeStandardFile);
+
+				fileUploadStatus = "Success";
+			} else {
+				return fileExistigStatus;
+			}
 		} catch (IOException e) {
 			e.printStackTrace();
-			fileUploadStatus="File uploading failed with reason:"+e.getMessage();
+			fileUploadStatus = "File uploading failed with reason:" + e.getMessage();
 		}
-		
+
 		return fileUploadStatus;
 //		
 	}
@@ -111,13 +111,13 @@ public class CodeStandardFileService {
 
 		case "snomed":
 			return snomedFolderName;
-			
+
 		case "medicine":
 			return medicineFolderName;
-		
+
 		default:
 			return "invalid code standard name";
-             
+
 		}
 	}
 
@@ -135,19 +135,19 @@ public class CodeStandardFileService {
 		}
 		return list;
 	}
-	
+
 	public String deleteFileInS3Bucket(String bucketName, String filePath) {
 
 		try {
 			s3Utility.delete(bucketName, filePath);
-			
+
 		} catch (Exception e) {
 			System.out.println(e.getLocalizedMessage());
 			return "File Delete Failed with Key:" + filePath;
 		}
 		return "File Deleted Successfully with Key:" + filePath;
 	}
-	
+
 	@Transactional
 	public String saveUploadedFileDetails(CodeStandardFile file) {
 
@@ -160,83 +160,85 @@ public class CodeStandardFileService {
 		}
 		return "Success: Uploaded File Details Saved Successfully";
 	}
-	
-	public List<CodeStandardFile> getCodeStandardFileDetails()
-	{
-		
-	   return codeStandardFileRepository.findAll();
+
+	public List<CodeStandardFile> getCodeStandardFileDetails() {
+
+		return codeStandardFileRepository.findAll();
 	}
-	
+
 	/*
-	 * This will check if uploading file already exists or not in any of Code Type folder Ex: icd/upload, icd/inprocess, icd/processed etc
+	 * This will check if uploading file already exists or not in any of Code Type
+	 * folder Ex: icd/upload, icd/inprocess, icd/processed etc
 	 */
 	public String checkFileAlreadyExistsInAnyTargetCodeFolders(String fileName, String targetCodeStandardFolder) {
-		
-		String uploadFolderPath=rootFolderName+"/"+uploadFolderName+"/"+targetCodeStandardFolder+"/"+fileName;
-		String inprocessFolderPath=rootFolderName+"/"+inprocessFolderName+"/"+targetCodeStandardFolder+"/"+fileName;
-		String processedFolderPath=rootFolderName+"/"+processedFolderName+"/"+targetCodeStandardFolder+"/"+fileName;
-		
-		if(s3Utility.isExist(bucketName, uploadFolderPath)) {
-			return "File uploading failed due to Same File already exists in S3 Bucket, Path:\""+uploadFolderPath+"\". Please delte existing file, If you want to upload new version of same file";
+
+		String uploadFolderPath = rootFolderName + "/" + uploadFolderName + "/" + targetCodeStandardFolder + "/"
+				+ fileName;
+		String inprocessFolderPath = rootFolderName + "/" + inprocessFolderName + "/" + targetCodeStandardFolder + "/"
+				+ fileName;
+		String processedFolderPath = rootFolderName + "/" + processedFolderName + "/" + targetCodeStandardFolder + "/"
+				+ fileName;
+
+		if (s3Utility.isExist(bucketName, uploadFolderPath)) {
+			return "File uploading failed due to Same File already exists in S3 Bucket, Path:\"" + uploadFolderPath
+					+ "\". Please delete existing file, If you want to upload new version of same file";
 		}
-		if(s3Utility.isExist(bucketName, inprocessFolderPath)) {
-			return "File uploading failed due to Same File already exists in S3 Bucket Path:\""+inprocessFolderPath+"\". You cant upload same file, if it is already in In-Process Folder";
+		if (s3Utility.isExist(bucketName, inprocessFolderPath)) {
+			return "File uploading failed due to Same File already exists in S3 Bucket Path:\"" + inprocessFolderPath
+					+ "\". You cant upload same file, if it is already in In-Process Folder";
 		}
-		if(s3Utility.isExist(bucketName, processedFolderPath)) {
-			return "File uploading failed due to Same File already exists in S3 Bucket Path:\""+processedFolderPath+"\". You cant upload same file, if it is already in Processed Folder";
+		if (s3Utility.isExist(bucketName, processedFolderPath)) {
+			return "File uploading failed due to Same File already exists in S3 Bucket Path:\"" + processedFolderPath
+					+ "\". You cant upload same file, if it is already in Processed Folder";
 		}
 		return "Success";
 	}
-	
+
 	public String deleteFileFromStandardTable(int fileId) {
-		
-		String status="Success";
+
+		String status = "Success";
 		try {
-		
-		Optional<CodeStandardFile> file= codeStandardFileRepository.findById(fileId);
-		codeStandardFileRepository.deleteById(fileId);
-		deleteFileInS3Bucket(bucketName, file.get().getFilePath());
-		}catch(Exception e) {
-			status="File Deletion Failed:"+e.getMessage();
+
+			Optional<CodeStandardFile> file = codeStandardFileRepository.findById(fileId);
+			codeStandardFileRepository.deleteById(fileId);
+			deleteFileInS3Bucket(bucketName, file.get().getFilePath());
+		} catch (Exception e) {
+			status = "File Deletion Failed:" + e.getMessage();
 		}
 		return status;
 	}
+
 	public String processCodeStandardFileData(int fileId) {
-		
-		String status="Success";
+		String status = "Success";
 		try {
-		
-		Optional<CodeStandardFile> file= codeStandardFileRepository.findById(fileId);
-		if(file.isPresent()) {
-			
-			CodeStandardFile fileData = file.get();
-			fileData.setProcessedStatus("InProcess");
-			codeStandardFileRepository.save(fileData);
-			
-			switch(fileData.getCodeStandard()) {
-				
+			Optional<CodeStandardFile> file = codeStandardFileRepository.findById(fileId);
+			if (file.isPresent()) {
+				CodeStandardFile fileData = file.get();
+				fileData.setProcessedStatus("InProcess");
+				codeStandardFileRepository.save(fileData);
+
+				switch (fileData.getCodeStandard()) {
+
 				case "icd10":
 					icdCodeStandardService.processCodeStandardFileData(fileData, bucketName);
-					//icdCodeStandardService.test();
-					
+					// icdCodeStandardService.test();
 					break;
-					
+
 				case "medicine":
 					medicineStandardService.processCodeStandardFileData(fileData, bucketName);
-					
+
 					break;
-					
-			    default:
-			    	status="Unknown Code Standard Name for Processing the File";
-			}	
-		}else {
-			return "There is no record with given File Id or File is not in Uploaded Status";
-		}
-		
-		
-		}catch(Exception e) {
-			status="File Process Failed:"+e.getMessage();
+
+				default:
+					status = "Unknown Code Standard Name for Processing the File";
+				}
+			} else {
+				return "There is no record with given File Id or File is not in Uploaded Status";
+			}
+
+		} catch (Exception e) {
+			status = "File Process Failed:" + e.getMessage();
 		}
 		return status;
-}
+	}
 }

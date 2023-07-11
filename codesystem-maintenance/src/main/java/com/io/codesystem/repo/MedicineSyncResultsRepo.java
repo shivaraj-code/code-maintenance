@@ -12,7 +12,7 @@ import com.io.codesystem.dto.model.MedicineSyncResults;
 @Repository
 public interface MedicineSyncResultsRepo  extends JpaRepository<MedicineSyncResults, Integer> {
 
-	//@Query(value="CALL IcdCompareAndSyncTables(:file_id,:file_name,:user_id)",nativeQuery=true)
-	//public IcdSyncResults icdCompareAndSyncTables(Integer file_id,String file_name,Integer user_id);
+	@Query(value="CALL MedicinesCompareAndSyncTables(:file_id,:file_name,:user_id)",nativeQuery=true)
+	public MedicineSyncResults medicinesCompareAndSyncTables(Integer file_id,String file_name,Integer user_id);
 	
 }

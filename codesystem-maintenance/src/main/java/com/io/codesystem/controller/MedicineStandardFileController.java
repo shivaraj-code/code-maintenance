@@ -17,7 +17,11 @@ import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.multipart.MultipartFile;
 
 import com.io.codesystem.dto.model.CodeStandardFile;
+import com.io.codesystem.dto.model.Icd10DataVerificationFile;
+import com.io.codesystem.dto.model.IcdSyncResults;
+import com.io.codesystem.dto.model.MedicineDataVerificationFile;
 import com.io.codesystem.dto.model.MedicineStandard;
+import com.io.codesystem.dto.model.MedicineSyncResults;
 import com.io.codesystem.service.CodeStandardFileService;
 import com.io.codesystem.service.MedicineStandardService;
 import com.io.codesystem.utility.JsonResponse;
@@ -99,4 +103,20 @@ public class MedicineStandardFileController {
 			return new ResponseEntity<>(jsonResponse, headers, HttpStatus.INTERNAL_SERVER_ERROR);
 		}
 	}
+	@GetMapping("/updates/verification")
+	public ResponseEntity<List<MedicineDataVerificationFile>> getDataVerificationFileDetails() {
+		List<MedicineDataVerificationFile> response = medicineStandardService.getDataVerificationFileDetails();
+		HttpHeaders headers = new HttpHeaders();
+		return new ResponseEntity<>(response, headers, HttpStatus.OK);
+
+	}
+
+	@GetMapping("/updates/synching")
+	public ResponseEntity<MedicineSyncResults> getMedicineSyncResults(@RequestParam int id) {
+		MedicineSyncResults response = medicineStandardService.getMedicineSyncResults(id);
+		HttpHeaders headers = new HttpHeaders();
+		return new ResponseEntity<>(response, headers, HttpStatus.OK);
+
+	}
+	
 }
