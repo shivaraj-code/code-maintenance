@@ -17,3 +17,15 @@ public class IcdSyncResults {
 	private String status;
 
 }
+@Data
+class IcdSyncDataResult{
+	
+	@Id
+	public Integer id;
+	private int file_id;
+	private int added_records;
+	private int updated_records;
+	private int deleted_records;
+	private String status;
+
+}

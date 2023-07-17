@@ -34,8 +34,8 @@ public class CodeStandardFile {
 	@Column(name = "processed_status")
 	public String processedStatus;
 
-	@Column(name = "temp_status")
-	public String tempStatus;
+	@Column(name = "current_status")
+	public String currentStatus;
 
 	@Column(name = "status")
 	public String status;
@@ -51,7 +51,10 @@ public class CodeStandardFile {
 
 	@Column(name = "user_id")
 	public Integer userId;
-
+    
+	@Column(name = "source")
+	public String source;
+	
 	@Column(name = "inserted_date")
 	public Timestamp insertedDate;
 
@@ -64,6 +67,4 @@ public class CodeStandardFile {
 	@Column(name = "active")
 	public Integer active;
 
-	@Column(name="source")
-	public String source;
 }

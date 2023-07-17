@@ -2,9 +2,11 @@ package com.io.codesystem.repo;
 
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
+import org.springframework.stereotype.Repository;
 
 import com.io.codesystem.dto.model.MedicineStandard;
 
+@Repository
 public interface MedicineStandardRepository extends JpaRepository<MedicineStandard, Integer> {
 
 

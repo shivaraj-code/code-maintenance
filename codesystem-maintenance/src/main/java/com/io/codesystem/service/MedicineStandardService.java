@@ -7,7 +7,8 @@ import java.io.FileReader;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
-import java.util.Collection;
+import java.sql.Timestamp;
+import java.time.LocalDateTime;
 import java.util.LinkedList;
 import java.util.List;
 import java.util.Optional;
@@ -21,18 +22,24 @@ import org.apache.commons.csv.CSVFormat;
 import org.apache.commons.csv.CSVParser;
 import org.apache.commons.csv.CSVRecord;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageImpl;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import com.io.codesystem.dto.model.CodeStandardFile;
-import com.io.codesystem.dto.model.Icd10DataVerificationFile;
-import com.io.codesystem.dto.model.IcdSyncResults;
 import com.io.codesystem.dto.model.MedicineDataVerificationFile;
 import com.io.codesystem.dto.model.MedicineStandard;
+import com.io.codesystem.dto.model.MedicineSyncDataRecords;
 import com.io.codesystem.dto.model.MedicineSyncResults;
+import com.io.codesystem.dto.model.PostSyncMedicineResults;
 import com.io.codesystem.repo.CodeStandardFileRepository;
 import com.io.codesystem.repo.MedicineDataVerificationFileRepository;
+import com.io.codesystem.repo.MedicinePostSyncResultsRepo;
 import com.io.codesystem.repo.MedicineStandardRepository;
+import com.io.codesystem.repo.MedicineSyncDataRecordsRepo;
 import com.io.codesystem.repo.MedicineSyncResultsRepo;
 import com.io.codesystem.utility.S3Utility;
 
@@ -49,137 +56,168 @@ public class MedicineStandardService {
 	private MedicineStandardRepository medicineStandardRepository;
 
 	@Autowired
-	private MedicineDataVerificationFileRepository meidicineDataVerificationFileRepository;
+	private MedicineDataVerificationFileRepository medicineDataVerificationFileRepository;
 
 	@Autowired
 	private MedicineSyncResultsRepo medicineSyncResultsRepo;
 
+	@Autowired
+	private MedicineSyncDataRecordsRepo medicineSyncDataRecordsRepo;
+
+	@Autowired
+	private MedicinePostSyncResultsRepo medicinePostSyncResultsRepo;
+
+	@Autowired
+	CodeMaintenanceLogService codeMaintenanceLogService;
+
 	@PersistenceContext
 	private EntityManager entityManager;
 
-	String dumpTableName = null;
+	String dumpTableName = "medicines_secure_latestrecords_07_2023";
 	CodeStandardFile metafile = null;
-
-	int userId = 2;
+	int id;
+	int globalUserId = 0;
 
 	@Transactional
-	public String processCodeStandardFileData(CodeStandardFile file, String bucketName) throws IOException {
+	public String processCodeStandardFileData(CodeStandardFile file, String bucketName, int userId) throws IOException {
 
+//		globalUserId=userId;
 		if (s3Utility.isExist(bucketName, file.getFilePath())) {
 
 			try (InputStream inputStream = s3Utility.getS3File(bucketName, file.getFilePath())) {
 
 				metafile = file;
-				String targetFileName = getTargetFilePathFromZipFolder(file.getFileName());
-				fileProcessAndInsertData(inputStream, targetFileName);
+				// String targetFileName = getTargetFilePathFromZipFolder(file.getFileName());
+				String targetFileName = "medicines_secure_latestrecords_07_2023.csv";
+				fileProcessAndInsertData(inputStream, targetFileName, userId, file);
 			}
 
 		}
+//		codeMaintenanceLogService.saveCodeMaintenanceLog(file.getId(),
+//			    "File Deletion", "File Deleted Successfully", globalUserId);
 		return "success";
 	}
 
 	@Transactional
-	public void fileProcessAndInsertData(InputStream zipInputStream, String targetFileName) throws IOException {
-
-		File targetFile = null;
+	public void fileProcessAndInsertData(InputStream zipInputStream, String targetFileName, int userId,
+			CodeStandardFile file) throws IOException {
+		File targetFile;
 		System.out.println("Zip file processing started");
 		// String status = "failed";
-
 		try (ZipInputStream zip = new ZipInputStream(zipInputStream)) {
 			ZipEntry entry;
 			System.out.println("************" + zip.getNextEntry().getName());
-
+			globalUserId = userId;
 			updateTempStatusOfCodeStandardFile("Zip File Extracted");
-			
-			while ((entry = zip.getNextEntry()) != null) {
-				String entryName = entry.getName();
-				System.out.println(entryName);
-				System.out.println("entry name printed");
-				if (entryName.equalsIgnoreCase(targetFileName)) {
-					System.out.println("Checking the target and file");
-					targetFile = File.createTempFile("temp", ".tmp");
 
-					try (OutputStream outputStream = new FileOutputStream(targetFile)) {
-						byte[] buffer = new byte[1024];
-						int length;
+			String entryName = "medicines_secure_latestrecords_07_2023.csv";
+			System.out.println(entryName);
+			System.out.println(targetFileName);
 
-						while ((length = zip.read(buffer)) >= 0) {
-							outputStream.write(buffer, 0, length);
-						}
+			if (entryName.equalsIgnoreCase(targetFileName)) {
+				System.out.println("Checking the target and file");
 
-						updateTempStatusOfCodeStandardFile("Reading of File Content Completed");
-						// Process and insert the data
-						System.out.println("Dump Table Name:" + dumpTableName);
-						insertDataIntoDatabase(targetFile, dumpTableName);
+				targetFile = File.createTempFile("temp", ".tmp");
+
+				System.out.println(targetFile.getName());
+				try (OutputStream outputStream = new FileOutputStream(targetFile)) {
+					byte[] buffer = new byte[1024];
+					int length;
+
+					while ((length = zip.read(buffer)) >= 0) {
+						outputStream.write(buffer, 0, length);
 					}
-					break;
+
+					codeMaintenanceLogService.saveCodeMaintenanceLog(metafile.getId(), "Zip File Processing",
+							"Zip File Processing Successfully", globalUserId);
+					updateTempStatusOfCodeStandardFile("Reading of File Content Completed");
+					// Process and insert the data
+					System.out.println("Dump Table Name:" + dumpTableName);
+					insertDataIntoDatabase(targetFile, dumpTableName, userId);
 				}
 
 			}
+
 		}
 	}
 
 	@Transactional
-	public void insertDataIntoDatabase(File file, String newTableName) {
-
-		List<MedicineStandard> medicineStandardList = new LinkedList<>();
+	public void insertDataIntoDatabase(File file, String newTableName, int userId) {
+		globalUserId = userId;
+		// List<MedicineStandard> medicineStandardList = new LinkedList<>();
 		// IcdSyncResults icdSyncResults=new IcdSyncResults();
 		try (BufferedReader reader = new BufferedReader(new FileReader(file))) {
-	
-			String line;
-			System.out.println("file reading");
-			reader.readLine();
-			while ((line = reader.readLine()) != null) {
-				// Process the line and insert the data using Hibernate
-				// Example: Splitting line by tab delimiter
-				// System.out.println("LINE:" + line);
-				String[] data = line.split("\t");
 
-				// Assuming you have an entity class named "EntityClass"
-				MedicineStandard entity = new MedicineStandard();
-				entity.setId(Integer.parseInt(data[0]));
-				entity.setNdc(data[1]);
-				entity.setName(data[2]);
-				entity.setDea(Integer.parseInt(data[3]));
-				entity.setObsdtec(data[4]);
-				entity.setRepack(Integer.parseInt(data[5]));
-				entity.setIsCompounded(data[6]);
+			CSVParser csvParser = new CSVParser(reader, CSVFormat.DEFAULT.withFirstRecordAsHeader());
+			List<MedicineStandard> medicineStandardList = new LinkedList<>();
+			Iterable<CSVRecord> csvRecords = csvParser.getRecords();
+			for (CSVRecord record : csvRecords) {
+				MedicineStandard medicines = new MedicineStandard();
 
-				medicineStandardList.add(entity);
-				// System.out.println("entries added to the table");
+				medicines.setId(Integer.parseInt(record.get(0)));
+				medicines.setNdc(record.get(1));
+				medicines.setName(record.get(2));
+				medicines.setDea(Integer.parseInt(record.get(3)));
+				medicines.setObsdtec(record.get(4));
+				medicines.setRepack(Integer.parseInt(record.get(5)));
+				medicines.setIsCompounded(record.get(6));
+
+				medicineStandardList.add(medicines);
 			}
+			medicineStandardRepository.saveAll(medicineStandardList);
 
-			saveMedicineStandardList(medicineStandardList, newTableName);
+			saveMedicineStandardList(medicineStandardList, newTableName, userId);
 
 			System.out.println("table created");
 
+			codeMaintenanceLogService.saveCodeMaintenanceLog(metafile.getId(),
+					"Medicine Data Verification Table Created", "Medicine Data Verification Table Created Successfully",
+					globalUserId);
+
 		} catch (IOException e) {
+			codeMaintenanceLogService.saveCodeMaintenanceLog(metafile.getId(),
+					"Medicine Data Verification Table Creation Failed",
+					"Medicine Data Verification Table Creation Failed", globalUserId);
 
 			System.err.println("An error occurred: " + e.getMessage());
 			e.printStackTrace();
 
 		}
-		// return icdSyncResults;
+
 	}
 
 	@Transactional
-	public void saveMedicineStandardList(List<MedicineStandard> medicineStandardList, String newTableName) {
+	public void saveMedicineStandardList(List<MedicineStandard> medicineStandardList, String newTableName, int userId) {
 		try {
-			truncateTable("medicines_standard_versions");
+
+			globalUserId = userId;
+			// truncateTable("medicines_standard_versions");
 			dropTable(newTableName);
 			System.out.println("Before Saving");
 			medicineStandardRepository.saveAll(medicineStandardList);
 			createNewTableFromExisting(newTableName);
 			System.out.println("After Saving");
 			updateTempStatusOfCodeStandardFile("Dump Table Created");
-			System.out
-					.println("After Dump Table Status Updated" + metafile.getId() + ":" + dumpTableName + ":" + userId);
-			medicineStandardRepository.prepareMedicineDataForVerification(metafile.getId(), dumpTableName, userId);
+			codeMaintenanceLogService.saveCodeMaintenanceLog(metafile.getId(), "Dump Table Created",
+					"Dump Table Created Successfully", globalUserId);
+			System.out.println(
+					"After Dump Table Status Updated" + metafile.getId() + ":" + dumpTableName + ":" + globalUserId);
+			medicineStandardRepository.prepareMedicineDataForVerification(metafile.getId(), dumpTableName,
+					globalUserId);
+
 			System.out.println("Data Prepared for Verification");
+
 			updateTempStatusOfCodeStandardFile("Medicines Verification Data Prepared");
-			truncateTable("medicines_standard_versions");
+			codeMaintenanceLogService.saveCodeMaintenanceLog(metafile.getId(), "Medicines Verification Data Prepared",
+					"Medicines Verification Data Prepared Successfully", globalUserId);
+
+//		truncateTable("icd_standard_versions");
 		} catch (Exception e) {
+			codeMaintenanceLogService.saveCodeMaintenanceLog(metafile.getId(),
+					"Medicines Verification Data Prepared Failed", "Medicines Verification Data Preparation Failed",
+					globalUserId);
 			System.out.println(e.getMessage());
+
 		}
 
 	}
@@ -215,7 +253,7 @@ public class MedicineStandardService {
 		System.out.println("New Table Creating from version Table");
 		String status = "success";
 		try {
-			System.out.println("Table have to created with dumpname");
+			System.out.println("Table have to created with dump name");
 			entityManager
 					.createNativeQuery("CREATE TABLE " + newTableName + " AS SELECT * FROM medicines_standard_versions")
 					.executeUpdate();
@@ -229,7 +267,10 @@ public class MedicineStandardService {
 	@Transactional
 	public void updateTempStatusOfCodeStandardFile(String statusValue) {
 
-		metafile.setTempStatus(statusValue);
+		metafile.setCurrentStatus(statusValue);
+		Timestamp newModifiedDate = Timestamp.valueOf(LocalDateTime.now());
+		// System.out.println(newModifiedDate.toString());
+		metafile.setModifiedDate(newModifiedDate);
 		codeStandardFileRepository.save(metafile);
 	}
 
@@ -237,33 +278,114 @@ public class MedicineStandardService {
 
 		// Assuming this is target File Name
 		// "icd102022/dot/icd10cm_2022/icd10cm_2022_tab.txt";
-		//medicines/medicines_secure_latestrecords.csv
-		String tempName = zipFileName.replace("medicines", "medicines_new_dump").replace(".zip", ""); 
-		String targetFileName = zipFileName.replace(".zip", "") + "/" +"medicines_secure_latestrecords.csv";
-		dumpTableName = tempName; 
+		// medicines_secure_latestrecords/medicines_secure_latestrecords.csv
+		// String tempName = zipFileName.replace("medicines",
+		// "medicines_new_dump").replace(".zip", "");
+
+		String targetFileName = zipFileName.replace(".zip", "") + "/" + "medicines_secure_latestrecords_07_2023.csv";
+		// dumpTableName = "medicines_secure_latestrecords";
 		return targetFileName;
 	}
 
-	public List<MedicineDataVerificationFile> getDataVerificationFileDetails() {
-
-		return meidicineDataVerificationFileRepository.findAll();
-	}
-
-	public MedicineSyncResults getMedicineSyncResults(int id) {
-		MedicineSyncResults medicineSyncResults = new MedicineSyncResults();
+	@Transactional
+	public MedicineSyncResults getMedicineSyncResults(int id,int userId)
+	{
+		globalUserId = userId;
+		MedicineSyncResults medicineSyncResults=new MedicineSyncResults();
 		String fileName;
 		Integer fileId;
-		Optional<CodeStandardFile> file = codeStandardFileRepository.findById(id);
+		Optional<CodeStandardFile> file= codeStandardFileRepository.findById(id);
 		if (file.isPresent()) {
-			CodeStandardFile codeStandardFile = file.get();
-			fileId = codeStandardFile.getId();
-			fileName = codeStandardFile.getFileName();
-			medicineSyncResults = medicineSyncResultsRepo.medicinesCompareAndSyncTables(fileId, fileName, userId);
-			updateTempStatusOfCodeStandardFile("synching completed");
-			return medicineSyncResults;
+	    CodeStandardFile codeStandardFile = file.get();
+	    fileId = codeStandardFile.getId();
+	    fileName = codeStandardFile.getFileName();
+	    
+	    String tempName = "medicine"; //fileName.replace("pharmacy", "pharmacy").replace(".zip", ""); 
+	    String taregtFileName = tempName+"_tab";
+	    
+	    medicineSyncResults=medicineSyncResultsRepo.medicineCompareAndSyncTables(fileId, taregtFileName, globalUserId);
+	    //updateTempStatusOfCodeStandardFile("synching completed");
+	    codeMaintenanceLogService.saveCodeMaintenanceLog(codeStandardFile.getId(),
+			    "Medicine Data Synching Completed", "Medicine Data Synching Completed Successfully", globalUserId);
+	    System.out.println("Before truncateTable method call");
+	    truncateTable("medicines_standard_versions");
+	    System.out.println("After truncateTable method call");
+	    codeStandardFile.setCurrentStatus("synching completed");
+	    codeStandardFile.setComments("Medicine File Proceessed Successfully");
+	    Timestamp newModifiedDate = Timestamp.valueOf(LocalDateTime.now());
+    	//System.out.println(newModifiedDate.toString());
+	    codeStandardFile.setModifiedDate(newModifiedDate);
+		codeStandardFileRepository.save(codeStandardFile);
+//		int addedRecords=icdSyncResults.getAdded_records();
+//		int updatedRecords=icdSyncResults.getUpdated_records();
+//		int deletedRecords=icdSyncResults.getDeleted_records();
+		//storeRecordLogAfterSync(fileId,addedRecords,deletedRecords,updatedRecords);
+	    return medicineSyncResults;
 		} else {
-			// Handle case where codeStandardFile is not found
-			return medicineSyncResults;
-		}
+	        // Handle case where codeStandardFile is not found
+	        return medicineSyncResults;
+	    }
 	}
+
+
+	@Transactional
+	public MedicineSyncDataRecords getMedicineSyncCounts(int fileId) {
+
+		String syncStatus = "";
+		Optional<CodeStandardFile> file = codeStandardFileRepository.findById(fileId);
+		if (file.isPresent()) {
+
+			CodeStandardFile metaFile = file.get();
+			if (metaFile.getCurrentStatus().equalsIgnoreCase("Medicines Verification Data Prepared")) {
+				syncStatus = "Pre Sync";
+			}
+			if (metaFile.getCurrentStatus().equalsIgnoreCase("Synching Completed")) {
+				syncStatus = "Post Sync";
+			}
+
+		}
+		return medicineSyncDataRecordsRepo.findByStatus(syncStatus);
+	}
+
+	/*
+	 * public void storeRecordLogAfterSync(Integer fileId, Integer addedRecords,
+	 * Integer deletedRecords, Integer updatedRecords) {
+	 * 
+	 * MedicineSyncDataRecords medicineSyncDataRecords = new
+	 * MedicineSyncDataRecords(); medicineSyncDataRecords.setFileId(fileId);
+	 * medicineSyncDataRecords.setAddedRecords(addedRecords);
+	 * medicineSyncDataRecords.setDeletedRecords(deletedRecords);
+	 * medicineSyncDataRecords.setUpdatedRecords(updatedRecords);
+	 * medicineSyncDataRecordsRepo.save(medicineSyncDataRecords); }
+	 */
+
+	public List<PostSyncMedicineResults> getMedicineSyncResults(int fileId, String status) {
+		// TODO Auto-generated method stub
+		return medicinePostSyncResultsRepo.medicinePostSyncDataResults(fileId, status);
+
+	}
+
+	/*
+	 * public List<MedicineDataVerificationFile> getNameorNDC(int fileId, String
+	 * ndc, String name, String status) { // TODO Auto-generated method stub return
+	 * medicineDataVerificationFileRepository.getMedicinesVerificationDetails(
+	 * fileId, ndc, name, status); }
+	 */
+	public Page<MedicineDataVerificationFile> getNameorNDC(int fileId, String ndc, String name, String status,int pageSize, int pageNumber) {
+		// TODO Auto-generated method stub
+		
+	        Pageable paging = PageRequest.of(pageNumber, pageSize);
+
+	        List<MedicineDataVerificationFile> medicineVerificationList = medicineDataVerificationFileRepository.getMedicinesVerificationDetails(
+	                fileId, ndc, name,status);
+
+	        Page<MedicineDataVerificationFile> pagedResult = new PageImpl<>(
+	                medicineVerificationList.subList(
+	                        Math.min(pageNumber * pageSize, medicineVerificationList.size()),
+	                        Math.min((pageNumber + 1) * pageSize, medicineVerificationList.size())
+	                ), paging, medicineVerificationList.size());
+
+	        return pagedResult;
+	    }
+	
 }

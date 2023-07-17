@@ -52,6 +52,6 @@ import lombok.Data;
 		   	public String status;
 			
 			
-		   
+	 
 }
 

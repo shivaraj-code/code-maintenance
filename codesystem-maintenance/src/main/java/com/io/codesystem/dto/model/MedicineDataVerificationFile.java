@@ -17,7 +17,7 @@ import lombok.Data;
 	public class MedicineDataVerificationFile {
 			@Id
 			@GeneratedValue(strategy = GenerationType.IDENTITY)
-			@Column(name = "aiid")
+			@Column(name = "ai_id")
 			private int aiid;
 			
 			@Column(name="id")

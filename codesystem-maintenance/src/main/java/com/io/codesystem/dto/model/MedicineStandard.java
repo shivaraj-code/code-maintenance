@@ -16,12 +16,11 @@ public class MedicineStandard {
 
 	@Id
 	@GeneratedValue(strategy = GenerationType.IDENTITY)
-	@Column(name = "aiid")
+	@Column(name = "ai_id")
 	private int aiid;
 
 	@Column(name = "id")
 	private int id;
-
 	@Column(name = "ndc")
 	private String ndc;
 
