@@ -1,0 +1,316 @@
+CodeSystem Stored Procedures:
+=============================
+1)PrepareIcdDataForVerification:
+---------------------------------
+CREATE DEFINER=`root`@`localhost` PROCEDURE `PrepareIcdDataForVerification`(IN file_id INT,
+IN file_name varChar(100),
+IN user_id INT
+)
+BEGIN
+      DECLARE added_records INT DEFAULT 0;
+      DECLARE updated_records INT DEFAULT 0;
+      DECLARE deleted_records INT DEFAULT 0;
+   -- Step 1: (Add) Insert new codes from icd_standard_versions into icdnew
+    Truncate Table icd10_data_verification;
+    INSERT INTO icd10_data_verification(icd_id, icd_code,icd_order,type, short_desc, medium_desc, long_desc,
+    file_id,status)
+   SELECT dump.icd_id,dump.icd_code,dump.icd_order,dump.type,dump.short_desc,dump.medium_desc,dump.long_desc,
+   file_id,'Added'
+   FROM icd_standard_versions dump
+    LEFT JOIN icdnew ex on ex.icd_code=dump.icd_code
+    where ex.icd_code is null;
+    set added_records=ROW_COUNT();
+  -- step2 Inserting change records as new records in existing table
+    INSERT INTO icd10_data_verification (icd_id, icd_code,icd_order,type, short_desc, medium_desc, long_desc,
+    file_id,status)
+    SELECT dump.icd_id,dump.icd_code,dump.icd_order,dump.type,dump.short_desc,dump.medium_desc,dump.long_desc,
+    file_id,'Updated'
+    FROM icd_standard_versions dump
+    INNER JOIN icdnew ex on ex.icd_code=dump.icd_code
+    WHERE dump.icd_code !='' and
+        (ex.short_desc != dump.short_desc
+        OR ex.medium_desc != dump.medium_desc
+        OR ex.long_desc != dump.long_desc
+        OR ex.type!=dump.type);
+set updated_records=ROW_COUNT();
+   -- Step 3: (Delete) Update status for codes not in icd_standard_versions but in icdnew
+   INSERT INTO icd10_data_verification (icd_id, icd_code,icd_order,type, short_desc, medium_desc, long_desc,
+    file_id,status)
+   SELECT ex.icd_id,ex.icd_code,ex.icd_order,ex.type,ex.short_desc,ex.medium_desc,ex.long_desc,
+    file_id,'Deleted'
+	 FROM icdnew ex
+     LEFT JOIN icd_standard_versions dump on ex.icd_code=dump.icd_code
+     where dump.icd_code is null;
+     set deleted_records=ROW_COUNT();
+    -- Deleting previous result based on fileid
+   delete from icd_sync_data_result where file_id=file_id and status='Pre Sync';
+   -- Insert summary counts
+   INSERT INTO icd_sync_data_result (file_id,added_records,updated_records,deleted_records,status)
+   SELECT file_id,added_records,updated_records,deleted_records,'Pre Sync';
+     select 1;
+END
+
+2)MedicinesCompareAndSyncTables:
+---------------------------------
+CREATE DEFINER=`root`@`localhost` PROCEDURE `MedicinesCompareAndSyncTables`(IN file_id INT,
+IN file_name varChar(100),
+IN user_id INT
+)
+BEGIN
+    -- Variables to store the record counts
+    DECLARE added_records INT DEFAULT 0;
+    DECLARE changed_records INT DEFAULT 0;
+    DECLARE updated_records INT DEFAULT 0;
+     DECLARE deleted_records INT DEFAULT 0;
+     -- Step 0:backup current table
+     CALL create_medicine_backup_table();
+      -- Step 1: (Add) Insert new codes from medicines_standard_versions into medicines
+    INSERT INTO medicines (id,ndc,name, dea, obsdtec, repack,is_compounded,
+    file_id,created_by,modified_by,data_source,version_state,status,sync_status)
+    SELECT dump.id,dump.ndc,dump.name,dump.dea,dump.obsdtec,dump.repack,dump.is_compounded,
+  file_id,user_id,user_id,file_name,'Validated','Y','Added'
+    FROM medicines_standard_versions dump
+    LEFT JOIN medicines ex on ex.ndc=dump.ndc and ex.id=dump.id
+    where ex.ndc is null;
+    -- Update the updated_records count
+        SET added_records = ROW_COUNT();
+	-- Updating RefId, Original_refid for newly inserting Records
+    UPDATE medicines SET ref_id = ai_id, original_ref_id = ai_id  WHERE  ref_id IS NULL;
+      -- Step 2: (Edit) Update status version state and descriptions in icdnew based on icd_standard_versions
+    UPDATE medicines ex
+    INNER JOIN medicines_standard_versions dump ON dump.ndc = ex.ndc and dump.id=ex.id
+    SET ex.version_state='TValid',
+    ex.modified_date=now(),
+    ex.file_id=file_id,
+    ex.modified_by=user_id
+    WHERE ((ex.status ='Y' and ex.version_state='Validated') and
+	  (ex.name != dump.name
+        OR ex.dea != dump.dea
+	    OR ex.repack !=dump.repack
+        OR ex.obsdtec != dump.obsdtec
+        OR ex.is_compounded!=dump.is_compounded)
+        OR(ex.status ='N' and ex.version_state='Validated'));
+       
+         -- Update the changed_records count
+        SET changed_records = ROW_COUNT();
+        
+-- step3 Inserting change records as new records in existing table
+if(changed_records>0) then
+ INSERT INTO medicines (id, ndc,name,dea,repack,obsdtec,is_compounded,
+    file_id,created_by,modified_by,data_source,version_state,status,sync_status,ref_id,original_ref_id)
+    SELECT dump.id,dump.ndc,dump.name,dump.dea,dump.repack,dump.obsdtec,dump.is_compounded,
+    file_id,user_id,user_id,file_name,'Validated''Y','Updated',ex.ai_id,ex.original_ref_id
+   FROM medicines_standard_versions dump
+    INNER JOIN medicines ex on ex.ndc=dump.ndc and ex.id=dump.id
+    WHERE (ex.name != dump.name
+        OR ex.dea != dump.dea
+        OR ex.obsdtec != dump.obsdtec
+        OR ex.repack!=dump.repack
+		OR ex.is_compounded !=dump.is_compounded);
+	 
+    -- Update the updated_records count
+        SET updated_records = ROW_COUNT();
+    end if;
+    -- Deleting previous result based on fileid
+   -- delete from medicines_sync_data_result where file_id=file_id and status='Post Sync';
+   delete from medicine_sync_data_result where file_id=file_id and status='Post Sync';
+      -- INSERT INTO medicines_sync_data_result (file_id,added_records,updated_records,status)
+   INSERT INTO medicine_sync_data_result (file_id,added_records,updated_records,deleted_records,status,user_id)
+   SELECT file_id,added_records,updated_records,0,'Post Sync',user_id;
+    -- Return the record counts
+    SELECT 1 as id, added_records, updated_records, deleted_records,'success' status;
+END
+
+3)IcdCompareAndSyncTables:
+---------------------------
+CREATE DEFINER=`root`@`localhost` PROCEDURE `IcdCompareAndSyncTables`(IN file_id INT,
+IN file_name varChar(100),
+IN user_id INT
+)
+BEGIN
+    -- Variables to store the record counts
+   DECLARE added_records INT DEFAULT 0;
+    DECLARE deleted_records INT DEFAULT 0;
+    DECLARE changed_records INT DEFAULT 0;
+    DECLARE updated_records INT DEFAULT 0;
+     -- Step 0:backup current table
+     CALL create_icd_backup_table();
+   -- Step 1: (Add) Insert new codes from icd_standard_versions into icdnew
+    INSERT INTO icdnew (icd_id, icd_code,icd_order,type, short_desc, medium_desc, long_desc,
+    file_id,created_by,modified_by,data_source,version_state,status,sync_status)
+    SELECT dump.icd_id,dump.icd_code,dump.icd_order,dump.type,dump.short_desc,dump.medium_desc,dump.long_desc,
+   file_id,user_id,user_id,file_name,'Validated','Y','Added'
+    FROM icd_standard_versions dump
+    LEFT JOIN icdnew ex on ex.icd_code=dump.icd_code
+    where ex.icd_code is null;
+    -- Update the updated_records count
+        SET added_records = ROW_COUNT();
+	-- Updating RefId, Original_refid for newly inserting Records
+    UPDATE icdnew SET ref_id = id, original_ref_id = id  WHERE  ref_id IS NULL;
+    -- Step 2: (Edit) Update status version state and descriptions in icdnew based on icd_standard_versions
+    UPDATE icdnew ex
+    INNER JOIN icd_standard_versions dump ON dump.icd_code = ex.icd_code
+    SET ex.version_state='TValid',ex.modified_date=now(),
+    ex.file_id=file_id,ex.modified_by=user_id
+    WHERE
+        ex.icd_code!='' and
+       ((ex.status ='Y' and ex.version_state='Validated') and
+         (ex.short_desc != dump.short_desc
+        OR ex.medium_desc != dump.medium_desc
+        OR ex.long_desc != dump.long_desc
+        OR ex.type!=dump.type)) or (ex.status ='N' and ex.version_state='Validated');
+         -- Update the changed_records count
+        SET changed_records = ROW_COUNT();
+-- step3 Inserting change records as new records in existing table
+if(changed_records>0) then
+ INSERT INTO icdnew (icd_id, icd_code,icd_order,type, short_desc, medium_desc, long_desc,
+    file_id,created_by,modified_by,data_source,version_state,status,ref_id,original_ref_id,sync_status)
+    SELECT dump.icd_id,dump.icd_code,dump.icd_order,dump.type,dump.short_desc,dump.medium_desc,dump.long_desc,
+    file_id,user_id,user_id,file_name,'Validated','Y',ex.id,ex.original_ref_id,'Updated'
+    FROM icd_standard_versions dump
+    INNER JOIN icdnew ex on ex.icd_code=dump.icd_code
+    WHERE ex.version_state='TValid';
+	-- Update the updated_records count
+    SET updated_records = ROW_COUNT();
+    update icdnew set version_state="InValidated" where version_state="TValid";
+    -- Updating RefId, Original_refid for newly changed Records
+    UPDATE icdnew SET ref_id = id, original_ref_id = id  WHERE  ref_id IS NULL;
+    end if;
+	
+    -- Step 4: (Delete) Update status for codes not in icd_standard_versions but in icdnew
+    UPDATE icdnew ex
+    left JOIN icd_standard_versions dump ON dump.icd_code = ex.icd_code
+    SET ex.version_state='InValidated', ex.modified_date=now(), ex.file_id=file_id, ex.modified_by=user_id
+    where dump.icd_code is null  and ex.status ='Y'  and ex.version_state='Validated';
+    -- step 5:(Delete) Insert the deleted codes change status 'N'
+    INSERT INTO icdnew (icd_id, icd_code,icd_order,type, short_desc, medium_desc, long_desc,
+    file_id,created_by,modified_by,data_source,version_state,status,sync_status)
+    SELECT ex.icd_id,ex.icd_code,ex.icd_order,ex.type,ex.short_desc,ex.medium_desc,ex.long_desc,
+    file_id,user_id,user_id,file_name,'Validated','N','Deleted'
+    FROM icdnew ex
+    left JOIN icd_standard_versions dump ON dump.icd_code = ex.icd_code
+    where dump.icd_code is null;
+    -- Updating RefId, Original_refid for newly Deleting Records
+    UPDATE icdnew SET ref_id = id, original_ref_id = id  WHERE  ref_id IS NULL;
+    -- Update the deleted_records count
+    SET deleted_records = ROW_COUNT();
+   -- Deleting previous result based on fileid
+   -- delete from icd_sync_data_result where file_id=file_id and status='Post Sync';
+   delete from code_change_counts where file_id=file_id and status='Post Sync';
+   -- INSERT INTO icd_sync_data_result (file_id,added_records,updated_records,deleted_records,status)
+   INSERT INTO code_change_counts (file_id,added_records,updated_records,deleted_records,status,user_id)
+   SELECT file_id,added_records,updated_records,deleted_records,'Post Sync',user_id;
+    -- Return the record counts
+    SELECT 1 as id, added_records , updated_records, deleted_records,'success' status;
+END
+
+4)GetMedicineVerificationDetails:
+---------------------------------
+CREATE DEFINER=`root`@`localhost` PROCEDURE `GetMedicineVerificationDetails`(
+    IN fileid int,
+    IN ndc varchar(45),
+    IN name varchar(255),
+    IN status varchar(50)
+)
+BEGIN
+    SELECT * FROM medicines_data_verification vr where vr.file_id=fileid
+    and (ndc =''or ndc is null or vr.ndc LIKE CONCAT('%', ndc, '%'))
+    and (name ='' or name is null or vr.name LIKE CONCAT('%', name, '%'))
+     and (status='' or status is null or vr.status=status);
+     select 1;
+END
+
+5)GetMedicinePostSyncData:
+--------------------------
+CREATE DEFINER=`root`@`localhost` PROCEDURE `GetMedicinePostSyncData`(
+IN file_id int,
+IN status varChar(100)
+)
+BEGIN
+IF status = 'Added' THEN
+SELECT * FROM medicines WHERE file_id=file_id and sync_status='Added';
+ELSEIF status = 'Updated' THEN
+SELECT * FROM medicines WHERE file_id=file_id and sync_status='Updated';
+ELSEIF status = 'Deleted' THEN
+SELECT * FROM medicines WHERE file_id=file_id and sync_status='Deleted';
+END IF;
+END
+
+6)GetIcdCodeVerificationDetails:
+--------------------------------
+CREATE DEFINER=`root`@`localhost` PROCEDURE `GetIcdCodeVerificationDetails`(
+    IN fileid int,
+    IN icdcode varchar(10),
+    IN codedesc varchar(255),
+    IN status varchar(50)
+)
+BEGIN
+    SELECT * FROM icd10_data_verification vr where vr.file_id=fileid
+    and (icdcode='' or icdcode is null or vr.icd_code LIKE CONCAT('%', icdcode, '%'))
+    and (codedesc='' or codedesc is null
+                      or vr.short_desc LIKE CONCAT('%', codedesc, '%')
+                      or vr.medium_desc LIKE CONCAT('%', codedesc, '%')
+                      or vr.long_desc LIKE CONCAT('%', codedesc, '%')
+                      )
+     and (status='' or status is null or vr.status=status);
+END
+
+7)getCptCodeCategorySearch:
+--------------------------
+CREATE DEFINER=`root`@`localhost` PROCEDURE `getCptCodeCategorySearch`(IN codeorshort varchar(255))
+BEGIN
+select distinct cs.*,ctg.cpt_major_category,ctg.cpt_minor_category
+from cpt_short cs
+left join cpt_category ctg on cs.code between ctg.start_code and ctg.end_code
+where version_state='Valid' and code like concat('%',codeorshort,'%');
+END
+
+8)Get_Icd_tree:
+---------------
+CREATE DEFINER=`root`@`localhost` PROCEDURE `Get_Icd_tree`(IN input_icd_id INT)
+BEGIN
+    DROP TEMPORARY TABLE IF EXISTS temp_table;
+    CREATE TEMPORARY TABLE temp_table(id INT, icd_id VARCHAR(45), parent_id INT, icd_code VARCHAR(10), short_desc VARCHAR(500), medium_desc VARCHAR(500),long_desc VARCHAR(500),type VARCHAR(15), level INT
+    );
+    SET @level = 0;
+    SET @current_id = input_icd_id;
+    -- First, find the root parent and determine its level
+    WHILE @current_id IS NOT NULL DO
+        INSERT INTO temp_table
+        SELECT icd.id, icd.icd_id, icd10.parent_id, icd.icd_code, icd.short_desc, icd.medium_desc,icd.long_desc,icd.type, @level
+        FROM icd
+        LEFT JOIN icd10_parent_codes icd10 ON icd.icd_id = icd10.id
+        WHERE icd.icd_id = @current_id;
+        SET @current_id = (SELECT parent_id FROM icd10_parent_codes WHERE id = @current_id);
+        SET @level = @level + 1;
+    END WHILE;
+    -- Calculate max level
+    SET @max_level = (SELECT MAX(level) FROM temp_table);
+    -- Update levels so that root parent starts from 0 and increases for each level
+    UPDATE temp_table SET level = @max_level - level;
+    -- Get siblings
+    SET @parent_id = (SELECT parent_id FROM icd10_parent_codes WHERE id = input_icd_id);
+    INSERT INTO temp_table
+    SELECT icd.id,icd.icd_id,icd10.parent_id,icd.icd_code,icd.short_desc,icd.medium_desc,icd.long_desc,icd.type, @max_level -- Sibling level will be the max level
+    FROM icd
+    LEFT JOIN icd10_parent_codes icd10 ON icd.icd_id = icd10.id
+    WHERE icd10.parent_id = @parent_id AND icd.icd_id <> input_icd_id;
+    -- Final Results
+    SELECT * FROM temp_table order by level,icd_code;
+END
+
+9)create_medicine_backup_table:
+-------------------------------
+CREATE DEFINER=`root`@`localhost` PROCEDURE `create_medicine_backup_table`()
+BEGIN
+    DECLARE current_date_str VARCHAR(14);
+    SET current_date_str = DATE_FORMAT(NOW(), '%d%m%Y%H%i');
+    SET @sql = CONCAT('CREATE TABLE medicines', current_date_str, ' LIKE medicines;');
+    PREPARE stmt FROM @sql;
+    EXECUTE stmt;
+    DEALLOCATE PREPARE stmt;
+    SET @sql = CONCAT('INSERT INTO medicines', current_date_str, ' SELECT * FROM medicines;');
+    PREPARE stmt FROM @sql;
+    EXECUTE stmt;
+    DEALLOCATE PREPARE stmt;
+END
