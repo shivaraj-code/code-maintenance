@@ -141,5 +141,65 @@ BEGIN
 END
 
 =============================
+4)Medicine_Update_Using_Batch
+
+CREATE DEFINER=`root`@`localhost` PROCEDURE `Medicine_Update_Using_Batch`(
+    IN file_id INT,
+    IN file_name VARCHAR(100),
+    IN user_id INT
+)
+BEGIN
+    DECLARE batch_size INT DEFAULT 5000;
+    DECLARE start_index INT DEFAULT 0;
+    DECLARE end_index INT;
+    DECLARE total_records INT;
+    DECLARE updated_records INT DEFAULT 0;
+    -- Get the total number of records in the medicines table
+    SELECT COUNT(*) INTO total_records FROM medicines1;
+    WHILE start_index < total_records DO
+        -- Calculate the end index for the current batch
+        SET end_index = start_index + batch_size;
+        -- Step 1: Your existing update logic
+        UPDATE medicines1 ex
+        INNER JOIN medicines_standard_versions1 dump ON dump.ndc = ex.ndc AND dump.id = ex.id
+        SET ex.version_state = 'TValid', ex.modified_date = NOW(),
+            ex.file_id = file_id, ex.modified_by = user_id
+        WHERE
+            (
+                (ex.status = 'Y' AND ex.version_state = 'Validated') AND
+                (
+                    ex.name != dump.name OR
+                    ex.dea != dump.dea OR
+                    ex.obsdtec != dump.obsdtec OR
+                    ex.repack != dump.repack OR
+                    ex.is_compounded != dump.is_compounded
+                )
+            )
+            OR (ex.status = 'N' AND ex.version_state = 'Validated');
+        -- Get the count of updated records in this batch
+        SET updated_records = updated_records + ROW_COUNT();
+        -- Insert changed records as new records in the existing table
+        INSERT INTO medicines1 (
+            id, ndc, name, dea, obsdtec, repack, is_compounded,
+            file_id, created_by, modified_by, data_source, version_state, status, ref_id,original_ref_id, sync_status
+        )
+        SELECT DISTINCT  -- Add DISTINCT to ensure only unique records are inserted
+            dump.id, dump.ndc, dump.name, dump.dea, dump.obsdtec, dump.repack, dump.is_compounded,
+            file_id, user_id, user_id, file_name, 'Validated', 'Y', ex.ai_id,ex.original_ref_id,'Updated'
+        FROM medicines_standard_versions1 dump
+        INNER JOIN medicines1 ex ON ex.ndc = dump.ndc AND ex.id = dump.id
+        WHERE ex.version_state = 'TValid';
+        -- Update the batch's start_index for the next iteration
+        SET start_index = end_index;
+    END WHILE;
+    -- Update version_state for newly changed records
+    UPDATE medicines1 SET version_state = 'InValidated' WHERE version_state = 'TValid';
+    -- Updating RefId, Original_refid for newly inserting Records
+   UPDATE medicines1 SET original_ref_id = ai_id WHERE original_ref_id IS NULL;
+    -- Update code_change_counts with the total updated_records count
+    UPDATE change_counts SET updated_records = updated_records, user_id = user_id WHERE file_id = file_id AND status = 'Post Sync';
+    -- Return success status
+    SELECT 1 AS id, 0 AS added_records, updated_records AS updated_records, 0 AS deleted_records, 'success' AS status;
+END
 
 
