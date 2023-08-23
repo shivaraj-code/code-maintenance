@@ -201,5 +201,124 @@ BEGIN
     -- Return success status
     SELECT 1 AS id, 0 AS added_records, updated_records AS updated_records, 0 AS deleted_records, 'success' AS status;
 END
+----------------------------------------------------
+5)Medicines_updates_Batch
+==========================
+CREATE DEFINER=`root`@`localhost` PROCEDURE `UpdatedMedicneSynchProcedure_Batch`(IN file_id INT,
+    IN file_name VARCHAR(100),
+    IN user_id INT)
+BEGIN
+    DECLARE batch_size INT DEFAULT 20000;
+    DECLARE start_index INT DEFAULT 0;
+    DECLARE end_index INT;
+    DECLARE total_records INT;
+    DECLARE updated_records INT DEFAULT 0;
+    -- Get the total number of records in the cpt table
+    SELECT COUNT(*) INTO total_records FROM medicines;
+    WHILE start_index < total_records DO
+        -- Calculate the end index for the current batch
+        SET end_index = start_index + batch_size;
+        -- Step 1: Your existing update logic
+      update medicines AS ex
+INNER JOIN medicines_standard_versions AS dump ON dump.ndc = ex.ndc and dump.id=ex.id
+SET ex.version_state = 'TValid', ex.modified_date = NOW(),
+        ex.file_id = file_id, ex.modified_by = user_id
+WHERE ((ex.version_state = 'Validated' and ex.status='Y' ) and( ex.name != dump.name
+        OR ex.dea != dump.dea
+ 	OR ex.obsdtec != dump.obsdtec
+ 	OR ex.repack != dump.repack
+ 	OR ex.is_compounded != dump.is_compounded)) or
+	(ex.version_state = 'Validated' and ex.status='N');
+        -- Get the count of updated records in this batch
+        SET updated_records = updated_records + ROW_COUNT();
+        -- Insert changed records as new records in the existing table
+       insert into medicines(id, ndc, name, dea, obsdtec, repack, is_compounded,
+	file_id, created_by, modified_by, data_source, version_state, status, ref_id, original_ref_id, sync_status)
+select distinct dump.id, dump.ndc, dump.name, dump.dea, dump.obsdtec, dump.repack, dump.is_compounded,
+file_id, user_id, user_id, file_name, 'Validated', 'Y', ex.ai_id, ex.original_ref_id, 'Updated' 
+from medicines_standard_versions dump
+inner join medicines ex on ex.ndc=dump.ndc and ex.id=dump.id
+where dump.ndc=ex.ndc and ex.version_state="TValid";
+update medicines set version_state="InValidated" where version_state="TValid";
+        -- Update the batch's start_index for the next iteration
+        SET start_index
+ end_index;
+    END WHILE;
+  
+    -- Update change_counts with the total updated_records count
+    UPDATE code_change_counts SET updated_records = updated_records, user_id = user_id WHERE file_id = file_id AND status = 'Post Sync';
+    -- Return success status
+    SELECT 1 AS id, 0 AS added_records, updated_records AS updated_records, 0 AS deleted_records, 'success' AS status;
+END
+
+=============================================================================
+6)Medicines_Added
+=================
+CREATE DEFINER=`root`@`localhost` PROCEDURE `AddedMedicineSynchProcedure`(IN file_id INT,
+IN file_name varChar(100),
+IN user_id INT
+)
+BEGIN
+DECLARE added_records INT DEFAULT 0;
+
+    -- Step 0:backup current table
+     CALL create_medicines_backup_table();
+ -- Step 1: (Add) Insert new codes from medicines_standard_versions into medicines
+    INSERT INTO medicines (id, ndc, name, dea, obsdtec, repack, is_compounded,
+    file_id,created_by,modified_by,data_source,version_state,status,sync_status)
+    SELECT dump.id,dump.ndc,dump.name,dump.dea,dump.obsdtec,dump.repack,dump.is_compounded,
+   file_id,user_id,user_id,file_name,'Validated','Y','Added'
+    FROM medicines_standard_versions dump
+    LEFT JOIN medicines ex on ex.ndc=dump.ndc and ex.id=dump.id
+    where ex.ndc is null;
+     -- Update the updated_records count
+        SET added_records = ROW_COUNT();
+	-- Updating RefId, Original_refid for newly inserting Records
+    UPDATE medicines SET original_ref_id = ai_id  WHERE  ref_id IS NULL;
+     -- Deleting previous result based on fileid
+   delete from code_change_counts where file_id=file_id and status='Post Sync';
+   -- INSERT INTO cpt_sync_data_result (file_id,added_records,updated_records,deleted_records,status)
+   INSERT INTO code_change_counts (file_id,added_records,status,user_id)
+   SELECT file_id,added_records,'Post Sync',user_id;
+   SELECT 1 as id, 0 as added_records, 0 as updated_records , 0 as deleted_records,'success' status;
+END
+==========================================
+7)Medicines_Update_Without_Batch
+================================
+
+CREATE DEFINER=`root`@`localhost` PROCEDURE `UpdatedMedicneSynchProcedure`(IN file_id INT,
+    IN file_name VARCHAR(100),
+    IN user_id INT)
+BEGIN
+DECLARE updated_records INT DEFAULT 0;
+
+update medicines AS ex
+INNER JOIN medicines_standard_versions AS dump ON ex.ndc = dump.ndc and ex.id=dump.id
+SET ex.version_state = 'TValid', ex.modified_date = NOW(),
+        ex.file_id = file_id, ex.modified_by = user_id
+WHERE ((ex.status = 'Y' AND ex.version_state = 'Validated' ) and( ex.name != dump.name OR
+                    ex.dea != dump.dea OR
+                    ex.obsdtec != dump.obsdtec OR
+                    ex.repack != dump.repack OR
+                    ex.is_compounded != dump.is_compounded)) or
+		(ex.version_state = 'Validated' and ex.status='N');
+	insert into medicines(id, ndc, name, dea, obsdtec, repack, is_compounded,
+	file_id, created_by, modified_by, data_source, version_state, status, ref_id, original_ref_id,sync_status)
+	select distinct dump.id, dump.ndc, dump.name, dump.dea, dump.obsdtec, dump.repack, dump.is_compounded,
+	file_id, user_id, user_id, file_name, 'Validated', 'Y', ex.ai_id,ex.original_ref_id, 'Updated'
+	from medicines_standard_versions dump
+	inner join medicines ex on ex.ndc = dump.ndc and ex.id=dump.id
+	where dump.ndc=ex.ndc and ex.version_state="TValid";
+	SET updated_records = ROW_COUNT();
+	update medicines set version_state="InValidated" where version_state="TValid";
+	-- UPDATE medicines SET original_ref_id = ai_id WHERE original_ref_id IS NULL;
+    
+	UPDATE code_change_counts SET updated_records = updated_records, user_id = user_id WHERE file_id = file_id AND status = "Post Sync";
+    -- Return success status
+    SELECT 1 AS id, 0 AS added_records, updated_records AS updated_records, 0 AS deleted_records, 'success' AS status;
+END
+
+
+
 
 
